@@ -1,4 +1,5 @@
 #include "objectCounter.hh"
+#include "binaryMaskEstimator.hh"
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <string>
@@ -15,10 +16,10 @@ void printUsage(const char* programName) {
     std::cout << "  -maxaspect <value>   Maximum aspect ratio for shape filtering (default: 3.0)" << std::endl;
     std::cout << "  -noarea              Disable area filtering" << std::endl;
     std::cout << "  -shape               Enable shape filtering" << std::endl;
-    std::cout << "  -b <block_size>      Block size for adaptive threshold (default: 11)" << std::endl;
-    std::cout << "  -c <C_value>         C parameter for adaptive threshold (default: 2.0)" << std::endl;
-    std::cout << "  -k <kernel_size>     Morphological kernel size (default: 5)" << std::endl;
-    std::cout << "  -iter <iterations>   Morphological iterations (default: 2)" << std::endl;
+    std::cout << "  -b <block_size>      Block size for adaptive threshold (default: 21)" << std::endl;
+    std::cout << "  -c <C_value>         C parameter for adaptive threshold (default: 10.0)" << std::endl;
+    std::cout << "  -k <kernel_size>     Morphological kernel size (default: 7)" << std::endl;
+    std::cout << "  -iter <iterations>   Morphological iterations (default: 3)" << std::endl;
     std::cout << "  -display             Display the results" << std::endl;
     std::cout << "  -summary             Print detailed object summary" << std::endl;
     std::cout << "  -help                Show this help message" << std::endl;
@@ -106,16 +107,19 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Processing user image ===" << std::endl;
         std::cout << "Input: " << inputPath << std::endl;
         
+        // Create binary mask estimator and object counter instances
+        BinaryMaskEstimator maskEstimator;
         ObjectCounter counter;
         
-        // Set filtering parameters
+        // Configure mask estimator
+        maskEstimator.setAdaptiveThresholdParams(blockSize, C);
+        maskEstimator.setMorphologicalParams(kernelSize, iterations);
+        
+        // Configure object counter filtering parameters
         counter.setAreaFilter(minArea, maxArea);
         counter.setShapeFilter(minCircularity, maxAspectRatio);
         counter.enableAreaFiltering(enableAreaFilter);
         counter.enableShapeFiltering(enableShapeFilter);
-        
-        // Set mask estimator parameters
-        counter.setMaskEstimatorParams(blockSize, C, kernelSize, iterations);
         
         // Print configuration
         std::cout << "Configuration:" << std::endl;
@@ -136,46 +140,76 @@ int main(int argc, char* argv[]) {
         std::cout << "  Morphology params: kernelSize=" << kernelSize 
                   << ", iterations=" << iterations << std::endl;
         
-        // Load and process the image
-        if (counter.loadImage(inputPath)) {
-            int objectCount = counter.countObjects();
-            
-            if (objectCount >= 0) {
-                // Generate and display the main result
-                std::string imageName = inputPath.substr(inputPath.find_last_of("/\\") + 1);
-                std::cout << "\n" << std::string(50, '=') << std::endl;
-                std::cout << "RESULT: " << ObjectCounter::generateSummaryText(objectCount, imageName) << std::endl;
-                std::cout << std::string(50, '=') << std::endl;
-                
-                // Print detailed summary if requested
-                if (showSummary) {
-                    counter.printObjectSummary();
-                }
-                
-                // Save results if output path specified
-                if (!outputPath.empty()) {
-                    counter.saveResults(outputPath);
-                } else {
-                    // Generate default output filename
-                    size_t lastDot = inputPath.find_last_of(".");
-                    std::string defaultOutput = inputPath.substr(0, lastDot) + "_object_count";
-                    counter.saveResults(defaultOutput);
-                }
-                
-                // Display if requested
-                if (display) {
-                    counter.displayResults("Object Count Results");
-                }
-                
-                std::cout << "\nProcessing completed successfully!" << std::endl;
-            } else {
-                std::cerr << "Failed to count objects!" << std::endl;
-                return 1;
-            }
-        } else {
-            std::cerr << "Failed to load input image: " << inputPath << std::endl;
+        // Step 1: Load image into mask estimator and generate binary mask
+        std::cout << "\n=== Step 1: Generating Binary Mask ===" << std::endl;
+        if (!maskEstimator.loadImage(inputPath)) {
+            std::cerr << "Failed to load input image into mask estimator: " << inputPath << std::endl;
             return 1;
         }
+        
+        cv::Mat binaryMask = maskEstimator.estimateBinaryMask();
+        if (binaryMask.empty()) {
+            std::cerr << "Failed to generate binary mask!" << std::endl;
+            return 1;
+        }
+        
+        // Step 2: Load image and binary mask into object counter
+        std::cout << "\n=== Step 2: Loading Image and Mask into Counter ===" << std::endl;
+        if (!counter.loadImage(inputPath)) {
+            std::cerr << "Failed to load input image into object counter: " << inputPath << std::endl;
+            return 1;
+        }
+        
+        if (!counter.loadBinaryMask(binaryMask)) {
+            std::cerr << "Failed to load binary mask into object counter!" << std::endl;
+            return 1;
+        }
+        
+        // Step 3: Count objects
+        std::cout << "\n=== Step 3: Counting Objects ===" << std::endl;
+        int objectCount = counter.countObjects();
+        
+        if (objectCount >= 0) {
+            // Generate and display the main result
+            std::string imageName = inputPath.substr(inputPath.find_last_of("/\\") + 1);
+            std::cout << "\n" << std::string(50, '=') << std::endl;
+            std::cout << "RESULT: " << ObjectCounter::generateSummaryText(objectCount, imageName) << std::endl;
+            std::cout << std::string(50, '=') << std::endl;
+            
+            // Print detailed summary if requested
+            if (showSummary) {
+                counter.printObjectSummary();
+            }
+            
+            // Save results if output path specified
+            if (!outputPath.empty()) {
+                counter.saveResults(outputPath);
+                // Also save the original binary mask from the estimator
+                size_t lastDot = outputPath.find_last_of(".");
+                std::string basePathNoExt = (lastDot != std::string::npos) ? outputPath.substr(0, lastDot) : outputPath;
+                maskEstimator.saveImage(basePathNoExt + "_original_mask.png", binaryMask);
+            } else {
+                // Generate default output filename
+                size_t lastDot = inputPath.find_last_of(".");
+                std::string defaultOutput = inputPath.substr(0, lastDot) + "_object_count";
+                counter.saveResults(defaultOutput);
+                maskEstimator.saveImage(defaultOutput + "_original_mask.png", binaryMask);
+            }
+            
+            // Display if requested
+            if (display) {
+                counter.displayResults("Object Count Results");
+            }
+            
+            std::cout << "\nProcessing completed successfully!" << std::endl;
+        } else {
+            std::cerr << "Failed to count objects!" << std::endl;
+            return 1;
+        }
+    } else {
+        std::cerr << "No input image specified. Use -i <image_path> to specify an input image." << std::endl;
+        std::cerr << "Use -help to see all available options." << std::endl;
+        return 1;
     }
     
     return 0;

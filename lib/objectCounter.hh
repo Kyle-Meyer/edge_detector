@@ -4,7 +4,6 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
-#include "binaryMaskEstimator.hh"
 
 struct ObjectInfo {
     int id;
@@ -21,7 +20,6 @@ private:
     cv::Mat inputImage;
     cv::Mat binaryMask;
     std::vector<ObjectInfo> detectedObjects;
-    BinaryMaskEstimator maskEstimator;
     
     // Parameters for object detection
     double minObjectArea;
@@ -51,13 +49,15 @@ public:
     bool loadImage(const std::string& imagePath);
     bool loadImage(const cv::Mat& image);
     
+    // Binary mask loading method
+    bool loadBinaryMask(const cv::Mat& mask);
+    
     // Main processing method
     int countObjects();
     
     // Parameter setting methods
     void setAreaFilter(double minArea, double maxArea);
     void setShapeFilter(double minCircularity, double maxAspectRatio);
-    void setMaskEstimatorParams(int blockSize, double C, int kernelSize, int iterations);
     void enableAreaFiltering(bool enable);
     void enableShapeFiltering(bool enable);
     

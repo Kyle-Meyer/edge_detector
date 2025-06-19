@@ -53,6 +53,32 @@ bool ObjectCounter::loadImage(const cv::Mat& image) {
     return true;
 }
 
+// Load binary mask from cv::Mat
+bool ObjectCounter::loadBinaryMask(const cv::Mat& mask) {
+    if (mask.empty()) {
+        std::cerr << "Error: Binary mask is empty" << std::endl;
+        return false;
+    }
+    
+    // Ensure the mask is single channel
+    if (mask.channels() == 1) {
+        binaryMask = mask.clone();
+    } else {
+        cv::cvtColor(mask, binaryMask, cv::COLOR_BGR2GRAY);
+    }
+    
+    // Ensure the mask is binary (0 or 255)
+    cv::threshold(binaryMask, binaryMask, 127, 255, cv::THRESH_BINARY);
+    
+    std::cout << "Binary mask loaded successfully" << std::endl;
+    showImageInfo(binaryMask, "Binary Mask");
+    
+    // Clear previous object detection results
+    detectedObjects.clear();
+    
+    return true;
+}
+
 // Main method to count objects
 int ObjectCounter::countObjects() {
     if (inputImage.empty()) {
@@ -60,26 +86,25 @@ int ObjectCounter::countObjects() {
         return -1;
     }
     
+    if (binaryMask.empty()) {
+        std::cerr << "Error: No binary mask loaded. Please load a binary mask first." << std::endl;
+        return -1;
+    }
+    
+    // Verify that image and mask have compatible dimensions
+    if (inputImage.rows != binaryMask.rows || inputImage.cols != binaryMask.cols) {
+        std::cerr << "Error: Input image and binary mask have different dimensions" << std::endl;
+        std::cerr << "Image size: " << inputImage.cols << "x" << inputImage.rows << std::endl;
+        std::cerr << "Mask size: " << binaryMask.cols << "x" << binaryMask.rows << std::endl;
+        return -1;
+    }
+    
     std::cout << "Starting object counting process..." << std::endl;
     
-    // Step 1: Generate binary mask using the mask estimator
-    if (!maskEstimator.loadImage(inputImage)) {
-        std::cerr << "Error: Failed to load image into mask estimator" << std::endl;
-        return -1;
-    }
-    
-    binaryMask = maskEstimator.estimateBinaryMask();
-    if (binaryMask.empty()) {
-        std::cerr << "Error: Failed to generate binary mask" << std::endl;
-        return -1;
-    }
-    
-    std::cout << "Binary mask generated successfully" << std::endl;
-    
-    // Step 2: Find contours in the binary mask
+    // Step 1: Find contours in the binary mask
     findContours();
     
-    // Step 3: Analyze objects and filter based on criteria
+    // Step 2: Analyze objects and filter based on criteria
     analyzeObjects();
     
     int objectCount = static_cast<int>(detectedObjects.size());
@@ -219,12 +244,6 @@ void ObjectCounter::setShapeFilter(double minCircularity, double maxAspectRatio)
     this->maxAspectRatio = maxAspectRatio;
 }
 
-// Set mask estimator parameters
-void ObjectCounter::setMaskEstimatorParams(int blockSize, double C, int kernelSize, int iterations) {
-    maskEstimator.setAdaptiveThresholdParams(blockSize, C);
-    maskEstimator.setMorphologicalParams(kernelSize, iterations);
-}
-
 // Enable/disable area filtering
 void ObjectCounter::enableAreaFiltering(bool enable) {
     this->useAreaFiltering = enable;
@@ -243,7 +262,7 @@ std::vector<ObjectInfo> ObjectCounter::getObjectInfo() const {
 // Print object summary
 void ObjectCounter::printObjectSummary() const {
     std::cout << "\n=== Object Detection Summary ===" << std::endl;
-    std::cout << "Total coins detected: " << detectedObjects.size() << std::endl;
+    std::cout << "Total objects detected: " << detectedObjects.size() << std::endl;
     
     if (!detectedObjects.empty()) {
         std::cout << "\nObject Details:" << std::endl;
