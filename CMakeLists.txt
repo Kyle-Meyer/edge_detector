@@ -61,10 +61,12 @@ include_directories(lib)
 # Define source files
 set(SOURCES
     src/binaryMaskEstimator.cpp
+    src/objectCounter.cpp 
 )
 
 set(HEADERS
     lib/binaryMaskEstimator.hh
+    lib/objectCounter.hh
 )
 
 # Create the main executable
