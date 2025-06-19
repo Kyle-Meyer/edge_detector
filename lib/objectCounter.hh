@@ -1,97 +1,85 @@
 #ifndef OBJECT_COUNTER_HH
 #define OBJECT_COUNTER_HH
 
-#include <opencv2/core/types.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
- 
-//handy struct to track image data easier
+#include "binaryMaskEstimator.hh"
+
 struct ObjectInfo {
-
-  int id;
-  double area;
-  cv::Point2f centroid;
-  cv::Rect boundingBox;
-  double perimeter;
-  double circularity; //4*pi*area/permiter^2
-  std::vector<cv::Point> contour;
+    int id;
+    double area;
+    cv::Point2f center;
+    cv::Rect boundingBox;
+    std::vector<cv::Point> contour;
+    double circularity;
+    double aspectRatio;
 };
 
-class ObjectCounter{
+class ObjectCounter {
 private:
-  cv::Mat inputImage;
-  cv::Mat binaryMask;
-  std::vector<ObjectInfo> detectedObjects;
-
-  //parameters for object detection
-  int minObjArea;
-  int maxObjArea;
-  double minCircularity;
-  double maxCircularity;
-  bool useAreaFilter;
-  bool useCircularity; //may not be needed?
-
-  void findContours(std::vector<std::vector<cv::Point>>& controus,
-                    std::vector<cv::Vec4i>& hierarchy);
-
-  void filterContours(const std::vector<std::vector<cv::Point>>& controus);
-
-  void calculateObjectProperties(const std::vector<cv::Point>& contour,
-                                 ObjectInfo& info,
-                                 int id);
-
-  double calculateCircularity(double area, double perimeter);
-
-  cv::Point2f calculateCentroid(const std::vector<cv::Point>& contour);
-
+    cv::Mat inputImage;
+    cv::Mat binaryMask;
+    std::vector<ObjectInfo> detectedObjects;
+    BinaryMaskEstimator maskEstimator;
+    
+    // Parameters for object detection
+    double minObjectArea;
+    double maxObjectArea;
+    double minCircularity;
+    double maxAspectRatio;
+    bool useAreaFiltering;
+    bool useShapeFiltering;
+    
+    // Internal methods
+    void findContours();
+    void analyzeObjects();
+    double calculateCircularity(const std::vector<cv::Point>& contour, double area);
+    double calculateAspectRatio(const cv::Rect& boundingBox);
+    bool isValidObject(const ObjectInfo& obj);
+    void drawObjectAnnotations(cv::Mat& image);
+    
+    // Static helper methods
+    static void showImageInfo(const cv::Mat& image, const std::string& imageName);
+    
 public:
-  //defualt constructor
-  ObjectCounter();
-
-  //default destructor
-  ~ObjectCounter();
-
-  //fun time
-  
-  bool loadBinaryMask(const cv::Mat& mask);
-  bool loadInputImage(const cv::Mat& image);
-
-  int countObjects();
-
-  void setAreaFilter(int minArea, int maxArea);
-  void setCircularityFilter(int minArea, int maxArea);
-  void enableAreaFilter(bool enable);
-  void enableCircularityFilter(bool enable);
-
-  //getters
-  int getObjCount() const;
-  std::vector<ObjectInfo> getDetectedObjects() const;
-  ObjectInfo getObjInfo(int index) const;
-  cv::Mat getBinaryMask() const;
-
-  //vis methods
-  cv::Mat drawObjectBoundaries(const cv::Mat& baseImg = cv::Mat(),
-                               const cv::Scalar& color = cv::Scalar(0, 255, 0), //default to green
-                               int thickness = 2);
-
-  cv::Mat drawObjectCentroids(const cv::Mat& baseImg = cv::Mat(),
-                              const cv::Scalar& color = cv::Scalar(255, 0, 0), //default to red
-                              int radius = 2);
-
-  cv::Mat drawObjectLabels(const cv::Mat& baseImg = cv::Mat(),
-                           const cv::Scalar& color = cv::Scalar(255, 255, 255)); //default white 
-
-  void displayResults(const std::string& windowName = "Obj Detection results");
-
-  //util
-  void saveResults(const std::string& outputPath, const cv::Mat& resultImage);
-  void printStats() const;
-  void saveToCSV(const std::string& csvPath) const;
-
-  //static util 
-  static cv::Mat createColorMask(const cv::Mat& binaryMask);
-  static void showDetectionInfo(int objectCounter, const std::vector<ObjectInfo>& objects);
+    // Constructor and Destructor
+    ObjectCounter();
+    ~ObjectCounter();
+    
+    // Image loading methods
+    bool loadImage(const std::string& imagePath);
+    bool loadImage(const cv::Mat& image);
+    
+    // Main processing method
+    int countObjects();
+    
+    // Parameter setting methods
+    void setAreaFilter(double minArea, double maxArea);
+    void setShapeFilter(double minCircularity, double maxAspectRatio);
+    void setMaskEstimatorParams(int blockSize, double C, int kernelSize, int iterations);
+    void enableAreaFiltering(bool enable);
+    void enableShapeFiltering(bool enable);
+    
+    // Results and display methods
+    std::vector<ObjectInfo> getObjectInfo() const;
+    void printObjectSummary() const;
+    void displayResults(const std::string& windowName = "Object Detection Results");
+    cv::Mat getAnnotatedImage();
+    
+    // Save methods
+    void saveAnnotatedImage(const std::string& outputPath);
+    void saveBinaryMask(const std::string& outputPath);
+    void saveResults(const std::string& basePath);
+    
+    // Getter methods
+    cv::Mat getInputImage() const;
+    cv::Mat getBinaryMask() const;
+    int getObjectCount() const;
+    
+    // Static utility methods
+    static cv::Mat combineImages(const cv::Mat& img1, const cv::Mat& img2, const cv::Mat& img3);
+    static std::string generateSummaryText(int objectCount, const std::string& imageName = "");
 };
 
-#endif //end of OBJECT_COUNTER_HH
+#endif // OBJECT_COUNTER_HH

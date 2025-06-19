@@ -1,9 +1,14 @@
 #include "binaryMaskEstimator.hh"
 #include <iostream>
+#include <opencv2/opencv.hpp>
 
 // Constructor
 BinaryMaskEstimator::BinaryMaskEstimator() 
-    : blockSize(11), C(2.0), morphKernelSize(5), morphIterations(2) {
+    : blockSize(11), C(2.0), morphKernelSize(5), morphIterations(2) 
+{
+    //magical values that I just found by playing with the program
+    setAdaptiveThresholdParams(21, 10.0);
+    setMorphologicalParams(7, 3);
 }
 
 // Destructor
@@ -96,7 +101,7 @@ void BinaryMaskEstimator::preprocessImage(cv::Mat& image) {
 void BinaryMaskEstimator::applyAdaptiveThreshold(const cv::Mat& grayImage, cv::Mat& mask) {
     cv::adaptiveThreshold(grayImage, mask, 255, 
                          cv::ADAPTIVE_THRESH_GAUSSIAN_C, 
-                         cv::THRESH_BINARY, blockSize, C);
+                         cv::THRESH_BINARY_INV, blockSize, C);
 }
 
 // Apply morphological operations to clean up the mask

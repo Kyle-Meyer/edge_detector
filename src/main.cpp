@@ -1,97 +1,182 @@
-#include "binaryMaskEstimator.hh"
+#include "objectCounter.hh"
+#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <string>
+#include <vector>
 
-void printUsage(const std::string& programName) {
-    std::cout << "Usage: " << programName << " <input_image_path> [output_mask_path]" << std::endl;
-    std::cout << "  input_image_path: Path to the input image" << std::endl;
-    std::cout << "  output_mask_path: (Optional) Path to save the binary mask" << std::endl;
+void printUsage(const char* programName) {
+    std::cout << "Usage: " << programName << " [options]" << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << "  -i <image_path>      Input image file path" << std::endl;
+    std::cout << "  -o <output_path>     Output base path for results (optional)" << std::endl;
+    std::cout << "  -minarea <value>     Minimum object area (default: 50)" << std::endl;
+    std::cout << "  -maxarea <value>     Maximum object area (default: 50000)" << std::endl;
+    std::cout << "  -mincirc <value>     Minimum circularity for shape filtering (default: 0.3)" << std::endl;
+    std::cout << "  -maxaspect <value>   Maximum aspect ratio for shape filtering (default: 3.0)" << std::endl;
+    std::cout << "  -noarea              Disable area filtering" << std::endl;
+    std::cout << "  -shape               Enable shape filtering" << std::endl;
+    std::cout << "  -b <block_size>      Block size for adaptive threshold (default: 11)" << std::endl;
+    std::cout << "  -c <C_value>         C parameter for adaptive threshold (default: 2.0)" << std::endl;
+    std::cout << "  -k <kernel_size>     Morphological kernel size (default: 5)" << std::endl;
+    std::cout << "  -iter <iterations>   Morphological iterations (default: 2)" << std::endl;
+    std::cout << "  -display             Display the results" << std::endl;
+    std::cout << "  -summary             Print detailed object summary" << std::endl;
+    std::cout << "  -help                Show this help message" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Examples:" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -display -summary" << std::endl;
+    std::cout << "  " << programName << " -i objects.png -o results -shape -mincirc 0.5" << std::endl;
+    std::cout << "  " << programName << " -i image.jpg -minarea 100 -maxarea 10000 -display" << std::endl;
 }
+
+
 int main(int argc, char* argv[]) {
-    // Check command line arguments
-    if (argc < 2) {
+    std::cout << "Object Counter Test Program" << std::endl;
+    std::cout << "==========================" << std::endl;
+    
+    // Parse command line arguments
+    std::string inputPath = "";
+    std::string outputPath = "";
+    double minArea = 50.0;
+    double maxArea = 50000.0;
+    double minCircularity = 0.3;
+    double maxAspectRatio = 3.0;
+    bool enableAreaFilter = true;
+    bool enableShapeFilter = false;
+    int blockSize = 21;
+    double C = 10.0;
+    int kernelSize = 7;
+    int iterations = 3;
+    bool display = false;
+    bool showSummary = false;
+    bool showHelp = false;
+    
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        
+        if (arg == "-help") {
+            showHelp = true;
+        } else if (arg == "-i" && i + 1 < argc) {
+            inputPath = argv[++i];
+        } else if (arg == "-o" && i + 1 < argc) {
+            outputPath = argv[++i];
+        } else if (arg == "-minarea" && i + 1 < argc) {
+            minArea = std::stod(argv[++i]);
+        } else if (arg == "-maxarea" && i + 1 < argc) {
+            maxArea = std::stod(argv[++i]);
+        } else if (arg == "-mincirc" && i + 1 < argc) {
+            minCircularity = std::stod(argv[++i]);
+        } else if (arg == "-maxaspect" && i + 1 < argc) {
+            maxAspectRatio = std::stod(argv[++i]);
+        } else if (arg == "-noarea") {
+            enableAreaFilter = false;
+        } else if (arg == "-shape") {
+            enableShapeFilter = true;
+        } else if (arg == "-b" && i + 1 < argc) {
+            blockSize = std::stoi(argv[++i]);
+        } else if (arg == "-c" && i + 1 < argc) {
+            C = std::stod(argv[++i]);
+        } else if (arg == "-k" && i + 1 < argc) {
+            kernelSize = std::stoi(argv[++i]);
+        } else if (arg == "-iter" && i + 1 < argc) {
+            iterations = std::stoi(argv[++i]);
+        } else if (arg == "-display") {
+            display = true;
+        } else if (arg == "-summary") {
+            showSummary = true;
+        }
+    }
+    
+    if (showHelp || argc == 1) {
         printUsage(argv[0]);
-        return -1;
+        
+        if (argc == 1) {
+            std::cout << "\nNo arguments provided. Running sample tests..." << std::endl;
+            
+            // Run sample tests if no arguments provided
+            //runTestWithSampleImages();
+            //runParameterComparison();
+        }
+        
+        return 0;
     }
     
-    std::string inputPath = argv[1];
-    std::string outputPath = (argc > 2) ? argv[2] : "";
-    
-    std::cout << "=== Binary Mask Estimation Program ===" << std::endl;
-    std::cout << "Input image: " << inputPath << std::endl;
-    
-    try {
-        // Create BinaryMaskEstimator instance
-        BinaryMaskEstimator estimator;
+    // Main processing with user-provided image
+    if (!inputPath.empty()) {
+        std::cout << "\n=== Processing user image ===" << std::endl;
+        std::cout << "Input: " << inputPath << std::endl;
         
-        // Load the input image
-        if (!estimator.loadImage(inputPath)) {
-            std::cerr << "Failed to load input image. Exiting..." << std::endl;
-            return -1;
+        ObjectCounter counter;
+        
+        // Set filtering parameters
+        counter.setAreaFilter(minArea, maxArea);
+        counter.setShapeFilter(minCircularity, maxAspectRatio);
+        counter.enableAreaFiltering(enableAreaFilter);
+        counter.enableShapeFiltering(enableShapeFilter);
+        
+        // Set mask estimator parameters
+        counter.setMaskEstimatorParams(blockSize, C, kernelSize, iterations);
+        
+        // Print configuration
+        std::cout << "Configuration:" << std::endl;
+        std::cout << "  Area filter: " << (enableAreaFilter ? "enabled" : "disabled");
+        if (enableAreaFilter) {
+            std::cout << " (min: " << minArea << ", max: " << maxArea << ")";
         }
+        std::cout << std::endl;
         
-        // Set custom parameters (optional)
-        // You can adjust these parameters based on your specific needs
-        estimator.setAdaptiveThresholdParams(11, 2.0);  // blockSize, C
-        estimator.setMorphologicalParams(5, 2);         // kernelSize, iterations
-        
-        std::cout << "\nProcessing image..." << std::endl;
-        
-        // Estimate the binary mask
-        cv::Mat binaryMask = estimator.estimateBinaryMask();
-        
-        if (binaryMask.empty()) {
-            std::cerr << "Failed to estimate binary mask. Exiting..." << std::endl;
-            return -1;
+        std::cout << "  Shape filter: " << (enableShapeFilter ? "enabled" : "disabled");
+        if (enableShapeFilter) {
+            std::cout << " (min circularity: " << minCircularity 
+                      << ", max aspect ratio: " << maxAspectRatio << ")";
         }
+        std::cout << std::endl;
         
-        // Display the results
-        std::cout << "\nDisplaying results (original image and binary mask)..." << std::endl;
-        estimator.displayImages("Original Image and Binary Mask");
+        std::cout << "  Threshold params: blockSize=" << blockSize << ", C=" << C << std::endl;
+        std::cout << "  Morphology params: kernelSize=" << kernelSize 
+                  << ", iterations=" << iterations << std::endl;
         
-        // Save the binary mask if output path is provided
-        if (!outputPath.empty()) {
-            estimator.saveImage(outputPath, binaryMask);
+        // Load and process the image
+        if (counter.loadImage(inputPath)) {
+            int objectCount = counter.countObjects();
+            
+            if (objectCount >= 0) {
+                // Generate and display the main result
+                std::string imageName = inputPath.substr(inputPath.find_last_of("/\\") + 1);
+                std::cout << "\n" << std::string(50, '=') << std::endl;
+                std::cout << "RESULT: " << ObjectCounter::generateSummaryText(objectCount, imageName) << std::endl;
+                std::cout << std::string(50, '=') << std::endl;
+                
+                // Print detailed summary if requested
+                if (showSummary) {
+                    counter.printObjectSummary();
+                }
+                
+                // Save results if output path specified
+                if (!outputPath.empty()) {
+                    counter.saveResults(outputPath);
+                } else {
+                    // Generate default output filename
+                    size_t lastDot = inputPath.find_last_of(".");
+                    std::string defaultOutput = inputPath.substr(0, lastDot) + "_object_count";
+                    counter.saveResults(defaultOutput);
+                }
+                
+                // Display if requested
+                if (display) {
+                    counter.displayResults("Object Count Results");
+                }
+                
+                std::cout << "\nProcessing completed successfully!" << std::endl;
+            } else {
+                std::cerr << "Failed to count objects!" << std::endl;
+                return 1;
+            }
         } else {
-            // Save with default name
-            std::string defaultOutput = "binary_mask_output.png";
-            estimator.saveImage(defaultOutput, binaryMask);
+            std::cerr << "Failed to load input image: " << inputPath << std::endl;
+            return 1;
         }
-        
-        // Optional: Show some statistics
-        cv::Mat mask = estimator.getBinaryMask();
-        int whitePixels = cv::countNonZero(mask);
-        int totalPixels = mask.rows * mask.cols;
-        double coverage = (double)whitePixels / totalPixels * 100.0;
-        
-        std::cout << "\n=== Results ===" << std::endl;
-        std::cout << "Binary mask generated successfully!" << std::endl;
-        std::cout << "Mask coverage: " << coverage << "% of the image" << std::endl;
-        std::cout << "White pixels: " << whitePixels << " / " << totalPixels << std::endl;
-        
-        // Demonstration of different parameter settings
-        std::cout << "\n=== Testing Different Parameters ===" << std::endl;
-        
-        // Test with more aggressive thresholding
-        estimator.setAdaptiveThresholdParams(15, 5.0);
-        cv::Mat mask2 = estimator.estimateBinaryMask();
-        estimator.saveImage("mask_aggressive.png", mask2);
-        
-        // Test with gentler thresholding
-        estimator.setAdaptiveThresholdParams(7, 1.0);
-        cv::Mat mask3 = estimator.estimateBinaryMask();
-        estimator.saveImage("mask_gentle.png", mask3);
-        
-        std::cout << "Additional masks saved: mask_aggressive.png, mask_gentle.png" << std::endl;
-        
-    } catch (const cv::Exception& e) {
-        std::cerr << "OpenCV Exception: " << e.what() << std::endl;
-        return -1;
-    } catch (const std::exception& e) {
-        std::cerr << "Standard Exception: " << e.what() << std::endl;
-        return -1;
     }
     
-    std::cout << "\nProgram completed successfully!" << std::endl;
     return 0;
 }
