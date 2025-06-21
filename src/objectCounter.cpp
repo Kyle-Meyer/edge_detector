@@ -6,14 +6,25 @@
 // Constructor
 ObjectCounter::ObjectCounter() 
     : minObjectArea(50.0), maxObjectArea(50000.0), minCircularity(0.3), 
-      maxAspectRatio(3.0), useAreaFiltering(true), useShapeFiltering(false)
+      maxAspectRatio(3.0), useAreaFiltering(true), useShapeFiltering(false),
+      enableCoinClassification(false), pixelsPerMM(0.0)
 {
     // Default parameters work well for coins and similar circular objects
+    initializeCoinDatabase();
 }
 
 // Destructor
 ObjectCounter::~ObjectCounter() {
     cv::destroyAllWindows();
+}
+
+// Initialize coin database with standard US coin specifications
+void ObjectCounter::initializeCoinDatabase() {
+    //all magic values that I just had to sit here and try ovr and over to work with
+    coinDatabase[CoinType::PENNY] = {CoinType::PENNY, "Penny", 8.0, cv::Scalar(139, 69, 19)};      // Brown
+    coinDatabase[CoinType::NICKEL] = {CoinType::NICKEL, "Nickel", 9.0, cv::Scalar(192, 192, 192)};  // Silver
+    coinDatabase[CoinType::DIME] = {CoinType::DIME, "Dime", 7.56, cv::Scalar(211, 211, 211)};        // Light Silver
+    coinDatabase[CoinType::QUARTER] = {CoinType::QUARTER, "Quarter", 10.25, cv::Scalar(169, 169, 169)}; // Gray
 }
 
 // Load image from file path
@@ -107,6 +118,11 @@ int ObjectCounter::countObjects() {
     // Step 2: Analyze objects and filter based on criteria
     analyzeObjects();
     
+    // Step 3: Classify coins if enabled
+    if (enableCoinClassification) {
+        classifyCoins();
+    }
+    
     int objectCount = static_cast<int>(detectedObjects.size());
     std::cout << "Object counting completed. Found " << objectCount << " objects." << std::endl;
     
@@ -147,8 +163,23 @@ void ObjectCounter::findContours() {
         obj.circularity = calculateCircularity(contours[i], obj.area);
         obj.aspectRatio = calculateAspectRatio(obj.boundingBox);
         
+        // Initialize coin-specific fields
+        obj.coinType = CoinType::UNKNOWN;
+        obj.diameter_pixels = calculateDiameter(contours[i]);
+        obj.estimated_diameter_mm = 0.0;
+        obj.confidence = 0.0;
+        
         detectedObjects.push_back(obj);
     }
+}
+
+// Calculate diameter of a contour
+double ObjectCounter::calculateDiameter(const std::vector<cv::Point>& contour) {
+    // Use minimum enclosing circle for diameter estimation
+    cv::Point2f center;
+    float radius;
+    cv::minEnclosingCircle(contour, center, radius);
+    return 2.0 * radius;
 }
 
 // Analyze objects and filter based on criteria
@@ -170,6 +201,53 @@ void ObjectCounter::analyzeObjects() {
     }
     
     std::cout << "After filtering: " << detectedObjects.size() << " valid objects" << std::endl;
+}
+
+// Classify coins based on size
+void ObjectCounter::classifyCoins() {
+    if (pixelsPerMM <= 0.0) {
+        std::cout << "Warning: No calibration set. Cannot classify coins by size." << std::endl;
+        std::cout << "Use setPixelsPerMM() or calibrateWithKnownCoin() first." << std::endl;
+        return;
+    }
+    
+    std::cout << "Classifying coins using calibration: " << pixelsPerMM << " pixels per mm" << std::endl;
+    
+    for (auto& obj : detectedObjects) {
+        // Convert pixel diameter to millimeters
+        obj.estimated_diameter_mm = obj.diameter_pixels / pixelsPerMM;
+        
+        // Classify based on size
+        obj.coinType = classifyBySize(obj.estimated_diameter_mm, obj.confidence);
+    }
+}
+
+// Classify coin by size with confidence score
+CoinType ObjectCounter::classifyBySize(double diameter_mm, double& confidence) {
+    CoinType bestMatch = CoinType::UNKNOWN;
+    double smallestDifference = std::numeric_limits<double>::max();
+    
+    for (const auto& pair : coinDatabase) {
+        const CoinInfo& coinInfo = pair.second;
+        double difference = std::abs(diameter_mm - coinInfo.diameter_mm);
+        
+        if (difference < smallestDifference) {
+            smallestDifference = difference;
+            bestMatch = coinInfo.type;
+        }
+    }
+    
+    // Calculate confidence based on how close the size match is
+    // Tolerance of ±2mm gives good confidence, beyond that confidence drops
+    double tolerance = 2.0; // mm
+    confidence = std::max(0.0, 1.0 - (smallestDifference / tolerance));
+    
+    // Only classify if confidence is above threshold
+    if (confidence < 0.3) {
+        return CoinType::UNKNOWN;
+    }
+    
+    return bestMatch;
 }
 
 // Calculate circularity (4π * area / perimeter²)
@@ -210,9 +288,15 @@ void ObjectCounter::drawObjectAnnotations(cv::Mat& image) {
     for (size_t i = 0; i < detectedObjects.size(); i++) {
         const ObjectInfo& obj = detectedObjects[i];
         
+        // Choose color based on coin type if coin classification is enabled
+        cv::Scalar color = cv::Scalar(0, 255, 0); // Default green
+        if (enableCoinClassification && obj.coinType != CoinType::UNKNOWN) {
+            color = getCoinColor(obj.coinType);
+        }
+        
         // Draw contour
         std::vector<std::vector<cv::Point>> contours = {obj.contour};
-        cv::drawContours(image, contours, -1, cv::Scalar(0, 255, 0), 2);
+        cv::drawContours(image, contours, -1, color, 2);
         
         // Draw bounding box
         cv::rectangle(image, obj.boundingBox, cv::Scalar(255, 0, 0), 1);
@@ -220,16 +304,178 @@ void ObjectCounter::drawObjectAnnotations(cv::Mat& image) {
         // Draw center point
         cv::circle(image, obj.center, 3, cv::Scalar(0, 0, 255), -1);
         
-        // Draw object number
-        std::string label = std::to_string(i + 1);
+        // Draw label
+        std::string label;
+        if (enableCoinClassification && obj.coinType != CoinType::UNKNOWN) {
+            label = coinTypeToString(obj.coinType);
+            if (obj.confidence > 0) {
+                label += " (" + std::to_string(static_cast<int>(obj.confidence * 100)) + "%)";
+            }
+        } else {
+            label = std::to_string(i + 1);
+        }
+        
         cv::putText(image, label, cv::Point(obj.center.x - 10, obj.center.y - 10),
-                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+                   cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 0), 1);
     }
     
     // Draw summary text
-    std::string summary = "Objects detected: " + std::to_string(detectedObjects.size());
+    std::string summary;
+    if (enableCoinClassification) {
+        auto coinCounts = getCoinCounts();
+        double totalValue = getTotalValue();
+        summary = "Coins: " + std::to_string(detectedObjects.size()) + 
+                 ", Value: $" + std::to_string(totalValue).substr(0, std::to_string(totalValue).find('.') + 3);
+    } else {
+        summary = "Objects detected: " + std::to_string(detectedObjects.size());
+    }
+    
     cv::putText(image, summary, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 
-                1.0, cv::Scalar(255, 255, 255), 2);
+                0.8, cv::Scalar(255, 255, 255), 2);
+}
+
+// Convert coin type to string
+std::string ObjectCounter::coinTypeToString(CoinType type) const {
+    auto it = coinDatabase.find(type);
+    if (it != coinDatabase.end()) {
+        return it->second.name;
+    }
+    return "Unknown";
+}
+
+// Get color for coin type
+cv::Scalar ObjectCounter::getCoinColor(CoinType type) const {
+    auto it = coinDatabase.find(type);
+    if (it != coinDatabase.end()) {
+        return it->second.color;
+    }
+    return cv::Scalar(128, 128, 128); // Gray for unknown
+}
+
+// Enable/disable coin classification
+void ObjectCounter::setCoinClassification(bool enable) {
+    this->enableCoinClassification = enable;
+}
+
+// Set pixels per millimeter for calibration
+void ObjectCounter::setPixelsPerMM(double pixelsPerMM) {
+    this->pixelsPerMM = pixelsPerMM;
+    std::cout << "Calibration set: " << pixelsPerMM << " pixels per millimeter" << std::endl;
+}
+
+// Calibrate using a known coin at specified position
+void ObjectCounter::calibrateWithKnownCoin(const cv::Point& coinCenter, CoinType knownType) {
+    if (detectedObjects.empty()) {
+        std::cerr << "Error: No objects detected. Run countObjects() first." << std::endl;
+        return;
+    }
+    
+    auto it = coinDatabase.find(knownType);
+    if (it == coinDatabase.end()) {
+        std::cerr << "Error: Unknown coin type for calibration" << std::endl;
+        return;
+    }
+    
+    // Find the closest object to the specified point
+    double minDistance = std::numeric_limits<double>::max();
+    const ObjectInfo* closestObject = nullptr;
+    
+    for (const auto& obj : detectedObjects) {
+        double distance = cv::norm(cv::Point2f(coinCenter) - obj.center);
+        if (distance < minDistance) {
+            minDistance = distance;
+            closestObject = &obj;
+        }
+    }
+    
+    if (closestObject == nullptr) {
+        std::cerr << "Error: No object found near calibration point" << std::endl;
+        return;
+    }
+    
+    // Calculate pixels per mm based on known coin
+    double knownDiameterMM = it->second.diameter_mm;
+    pixelsPerMM = closestObject->diameter_pixels / knownDiameterMM;
+    
+    std::cout << "Calibration completed using " << coinTypeToString(knownType) << std::endl;
+    std::cout << "Measured diameter: " << closestObject->diameter_pixels << " pixels" << std::endl;
+    std::cout << "Known diameter: " << knownDiameterMM << " mm" << std::endl;
+    std::cout << "Calibration: " << pixelsPerMM << " pixels per mm" << std::endl;
+}
+
+// Get count of each coin type
+std::map<CoinType, int> ObjectCounter::getCoinCounts() const {
+    std::map<CoinType, int> counts;
+    
+    // Initialize all coin types to 0
+    for (const auto& pair : coinDatabase) {
+        counts[pair.first] = 0;
+    }
+    counts[CoinType::UNKNOWN] = 0;
+    
+    // Count detected coins
+    for (const auto& obj : detectedObjects) {
+        counts[obj.coinType]++;
+    }
+    
+    return counts;
+}
+
+// Calculate total monetary value
+double ObjectCounter::getTotalValue() const {
+    double total = 0.0;
+    
+    for (const auto& obj : detectedObjects) {
+        switch (obj.coinType) {
+            case CoinType::PENNY: total += 0.01; break;
+            case CoinType::NICKEL: total += 0.05; break;
+            case CoinType::DIME: total += 0.10; break;
+            case CoinType::QUARTER: total += 0.25; break;
+            case CoinType::HALF_DOLLAR: total += 0.50; break;
+            case CoinType::DOLLAR: total += 1.00; break;
+            default: break; // Unknown coins don't add value
+        }
+    }
+    
+    return total;
+}
+
+// Print coin summary
+void ObjectCounter::printCoinSummary() const {
+    std::cout << "\n=== Coin Detection Summary ===" << std::endl;
+    
+    auto coinCounts = getCoinCounts();
+    double totalValue = getTotalValue();
+    
+    std::cout << "Coin breakdown:" << std::endl;
+    for (const auto& pair : coinDatabase) {
+        CoinType type = pair.first;
+        const CoinInfo& info = pair.second;
+        int count = coinCounts[type];
+        
+        if (count > 0) {
+            double value = 0.0;
+            switch (type) {
+                case CoinType::PENNY: value = count * 0.01; break;
+                case CoinType::NICKEL: value = count * 0.05; break;
+                case CoinType::DIME: value = count * 0.10; break;
+                case CoinType::QUARTER: value = count * 0.25; break;
+                case CoinType::HALF_DOLLAR: value = count * 0.50; break;
+                case CoinType::DOLLAR: value = count * 1.00; break;
+            }
+            
+            std::cout << "  " << info.name << ": " << count 
+                      << " ($" << std::fixed << std::setprecision(2) << value << ")" << std::endl;
+        }
+    }
+    
+    if (coinCounts[CoinType::UNKNOWN] > 0) {
+        std::cout << "  Unknown: " << coinCounts[CoinType::UNKNOWN] << " ($0.00)" << std::endl;
+    }
+    
+    std::cout << "Total coins: " << detectedObjects.size() << std::endl;
+    std::cout << "Total value: $" << std::fixed << std::setprecision(2) << totalValue << std::endl;
+    std::cout << "===============================" << std::endl;
 }
 
 // Set area filter parameters
@@ -268,8 +514,15 @@ void ObjectCounter::printObjectSummary() const {
         std::cout << "\nObject Details:" << std::endl;
         std::cout << std::setw(4) << "ID" << std::setw(10) << "Area" 
                   << std::setw(12) << "Center X" << std::setw(12) << "Center Y"
-                  << std::setw(12) << "Circularity" << std::setw(12) << "Aspect Ratio" << std::endl;
-        std::cout << std::string(70, '-') << std::endl;
+                  << std::setw(12) << "Circularity" << std::setw(12) << "Aspect Ratio";
+        
+        if (enableCoinClassification) {
+            std::cout << std::setw(12) << "Coin Type" << std::setw(12) << "Diameter(mm)" << std::setw(10) << "Confidence";
+        }
+        std::cout << std::endl;
+        
+        int lineWidth = enableCoinClassification ? 104 : 70;
+        std::cout << std::string(lineWidth, '-') << std::endl;
         
         for (const auto& obj : detectedObjects) {
             std::cout << std::setw(4) << (obj.id + 1)
@@ -277,8 +530,14 @@ void ObjectCounter::printObjectSummary() const {
                       << std::setw(12) << std::fixed << std::setprecision(1) << obj.center.x
                       << std::setw(12) << std::fixed << std::setprecision(1) << obj.center.y
                       << std::setw(12) << std::fixed << std::setprecision(3) << obj.circularity
-                      << std::setw(12) << std::fixed << std::setprecision(2) << obj.aspectRatio
-                      << std::endl;
+                      << std::setw(12) << std::fixed << std::setprecision(2) << obj.aspectRatio;
+            
+            if (enableCoinClassification) {
+                std::cout << std::setw(12) << coinTypeToString(obj.coinType)
+                          << std::setw(12) << std::fixed << std::setprecision(2) << obj.estimated_diameter_mm
+                          << std::setw(10) << std::fixed << std::setprecision(1) << (obj.confidence * 100) << "%";
+            }
+            std::cout << std::endl;
         }
         
         // Calculate statistics
@@ -295,6 +554,11 @@ void ObjectCounter::printObjectSummary() const {
                   << totalArea / detectedObjects.size() << std::endl;
         std::cout << "  Average circularity: " << std::fixed << std::setprecision(3) 
                   << avgCircularity / detectedObjects.size() << std::endl;
+        
+        if (enableCoinClassification && pixelsPerMM > 0) {
+            std::cout << "  Calibration: " << std::fixed << std::setprecision(2) 
+                      << pixelsPerMM << " pixels per mm" << std::endl;
+        }
     }
     
     std::cout << "=================================" << std::endl;
@@ -429,6 +693,24 @@ std::string ObjectCounter::generateSummaryText(int objectCount, const std::strin
         summary += " object.";
     } else {
         summary += " objects.";
+    }
+    
+    return summary;
+}
+
+// Static method to generate coin summary text
+std::string ObjectCounter::generateCoinSummaryText(const std::map<CoinType, int>& coinCounts, double totalValue) {
+    std::string summary = "Found ";
+    
+    int totalCoins = 0;
+    for (const auto& pair : coinCounts) {
+        totalCoins += pair.second;
+    }
+    
+    summary += std::to_string(totalCoins) + " coins";
+    
+    if (totalValue > 0) {
+        summary += " worth $" + std::to_string(totalValue).substr(0, std::to_string(totalValue).find('.') + 3);
     }
     
     return summary;

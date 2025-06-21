@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
@@ -22,35 +23,204 @@ void printUsage(const char* programName) {
     std::cout << "  -iter <iterations>   Morphological iterations (default: 3)" << std::endl;
     std::cout << "  -display             Display the results" << std::endl;
     std::cout << "  -summary             Print detailed object summary" << std::endl;
+    
+    // Coin detection options
+    std::cout << std::endl << "Coin Detection Options:" << std::endl;
+    std::cout << "  -coins               Enable coin classification" << std::endl;
+    std::cout << "  -ppmm <value>        Pixels per millimeter for size calibration" << std::endl;
+    std::cout << "  -calibrate <x> <y> <type>  Calibrate using known coin at position (x,y)" << std::endl;
+    std::cout << "                       Types: penny, nickel, dime, quarter, half, dollar" << std::endl;
+    std::cout << "  -preset <name>       Use preset calibration (phone, camera, scanner)" << std::endl;
+    std::cout << "  -coinsum             Print coin summary with total value" << std::endl;
+    std::cout << "  -interactive         Interactive calibration mode" << std::endl;
+    
     std::cout << "  -help                Show this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
-    std::cout << "  " << programName << " -i coins.jpg -display -summary" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -coins -preset phone -coinsum -display" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -coins -interactive -display" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -coins -coinsum -display" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -coins -calibrate 100 150 quarter -coinsum" << std::endl;
+    std::cout << "  " << programName << " -i coins.jpg -coins -ppmm 15.7 -coinsum -display" << std::endl;
     std::cout << "  " << programName << " -i objects.png -o results -shape -mincirc 0.5" << std::endl;
-    std::cout << "  " << programName << " -i image.jpg -minarea 100 -maxarea 10000 -display" << std::endl;
 }
 
+struct CalibrationPreset {
+    std::string name;
+    double pixelsPerMM;
+    std::string description;
+};
+
+std::vector<CalibrationPreset> getCalibrationPresets() {
+    return {
+        {"phone", 12.0, "Typical smartphone camera at 12 inches"},
+        {"camera", 15.0, "Digital camera at moderate distance"},
+        {"scanner", 11.8, "Flatbed scanner at 300 DPI"},
+        {"macro", 25.0, "Close-up macro photography"},
+        {"webcam", 8.0, "Standard webcam at arm's length"},
+        {"tablet", 10.0, "Tablet camera at typical distance"}
+    };
+}
+
+void printPresets() {
+    auto presets = getCalibrationPresets();
+    std::cout << "\nAvailable calibration presets:" << std::endl;
+    for (const auto& preset : presets) {
+        std::cout << "  " << preset.name << ": " << preset.pixelsPerMM 
+                  << " pixels/mm (" << preset.description << ")" << std::endl;
+    }
+}
+
+// Function to get preset calibration value
+double getPresetCalibration(const std::string& presetName) {
+    auto presets = getCalibrationPresets();
+    for (const auto& preset : presets) {
+        if (preset.name == presetName) {
+            return preset.pixelsPerMM;
+        }
+    }
+    return -1.0;  // Not found
+}
+
+// Function to convert string to CoinType
+CoinType stringToCoinType(const std::string& coinStr) {
+    std::string lower = coinStr;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    
+    if (lower == "penny") return CoinType::PENNY;
+    if (lower == "nickel") return CoinType::NICKEL;
+    if (lower == "dime") return CoinType::DIME;
+    if (lower == "quarter") return CoinType::QUARTER;
+    if (lower == "half" || lower == "halfdollar") return CoinType::HALF_DOLLAR;
+    if (lower == "dollar") return CoinType::DOLLAR;
+    
+    return CoinType::UNKNOWN;
+}
+
+void runInteractiveCalibration(ObjectCounter& counter) {
+    std::cout << "\n=== Interactive Calibration Mode ===" << std::endl;
+    std::cout << "The image will be displayed. Click on a coin you can identify." << std::endl;
+    std::cout << "After clicking, you'll be prompted to enter the coin type." << std::endl;
+    
+    cv::Mat image = counter.getInputImage();
+    if (image.empty()) {
+        std::cerr << "Error: No image loaded for calibration" << std::endl;
+        return;
+    }
+    
+    // Create a copy for display
+    cv::Mat displayImage = image.clone();
+    
+    // Global variables for mouse callback
+    static cv::Point selectedPoint(-1, -1);
+    static bool pointSelected = false;
+    
+    // Mouse callback function
+    auto mouseCallback = [](int event, int x, int y, int flags, void* userdata) {
+        if (event == cv::EVENT_LBUTTONDOWN) {
+            selectedPoint = cv::Point(x, y);
+            pointSelected = true;
+            std::cout << "Selected point: (" << x << ", " << y << ")" << std::endl;
+        }
+    };
+    
+    cv::namedWindow("Calibration - Click on a known coin", cv::WINDOW_AUTOSIZE);
+    cv::setMouseCallback("Calibration - Click on a known coin", mouseCallback, nullptr);
+    
+    cv::imshow("Calibration - Click on a known coin", displayImage);
+    
+    std::cout << "Click on a coin in the image window..." << std::endl;
+    
+    // Wait for mouse click
+    while (!pointSelected) {
+        int key = cv::waitKey(30);
+        if (key == 27) { // ESC key
+            std::cout << "Calibration cancelled." << std::endl;
+            cv::destroyWindow("Calibration - Click on a known coin");
+            return;
+        }
+    }
+    
+    cv::destroyWindow("Calibration - Click on a known coin");
+    
+    // Get coin type from user
+    std::cout << "\nWhat type of coin did you click on?" << std::endl;
+    std::cout << "Options: penny, nickel, dime, quarter, half, dollar" << std::endl;
+    std::cout << "Enter coin type: ";
+    
+    std::string coinTypeStr;
+    std::cin >> coinTypeStr;
+    
+    CoinType coinType = stringToCoinType(coinTypeStr);
+    if (coinType == CoinType::UNKNOWN) {
+        std::cerr << "Error: Unknown coin type '" << coinTypeStr << "'" << std::endl;
+        return;
+    }
+    
+    // Perform calibration
+    counter.calibrateWithKnownCoin(selectedPoint, coinType);
+    std::cout << "Calibration completed!" << std::endl;
+}
+
+void runSampleTest() {
+    std::cout << "\n=== Running Sample Test ===" << std::endl;
+    std::cout << "This demonstrates the coin detection system." << std::endl;
+    std::cout << "For real testing, provide an image with: -i <image_path>" << std::endl;
+    
+    // Create a simple test image with circles
+    cv::Mat testImage(400, 600, CV_8UC3, cv::Scalar(50, 50, 50));
+    
+    // Draw some circles to simulate coins
+    cv::circle(testImage, cv::Point(100, 100), 30, cv::Scalar(200, 200, 200), -1); // Large circle
+    cv::circle(testImage, cv::Point(250, 100), 25, cv::Scalar(180, 180, 180), -1); // Medium circle
+    cv::circle(testImage, cv::Point(400, 100), 20, cv::Scalar(160, 160, 160), -1); // Small circle
+    cv::circle(testImage, cv::Point(100, 250), 35, cv::Scalar(220, 220, 220), -1); // Larger circle
+    cv::circle(testImage, cv::Point(250, 250), 22, cv::Scalar(170, 170, 170), -1); // Small-medium
+    
+    // Add some noise
+    cv::circle(testImage, cv::Point(450, 300), 15, cv::Scalar(100, 100, 100), -1); // Very small
+    cv::rectangle(testImage, cv::Rect(350, 200, 40, 60), cv::Scalar(150, 150, 150), -1); // Rectangle
+    
+    std::cout << "Created synthetic test image with circular objects." << std::endl;
+    
+    // Save test image
+    cv::imwrite("test_coins.png", testImage);
+    std::cout << "Test image saved as 'test_coins.png'" << std::endl;
+    
+    std::cout << "You can now test with: " << std::endl;
+    std::cout << "./program -i test_coins.png -coins -ppmm 10.0 -coinsum -display" << std::endl;
+}
 
 int main(int argc, char* argv[]) {
-    std::cout << "Object Counter Test Program" << std::endl;
-    std::cout << "==========================" << std::endl;
+    std::cout << "Coin Counter Test Program" << std::endl;
+    std::cout << "=========================" << std::endl;
     
     // Parse command line arguments
     std::string inputPath = "";
     std::string outputPath = "";
-    double minArea = 50.0;
+    double minArea = 200.0;
     double maxArea = 50000.0;
     double minCircularity = 0.3;
-    double maxAspectRatio = 3.0;
+    double maxAspectRatio = 2.0;
     bool enableAreaFilter = true;
-    bool enableShapeFilter = false;
-    int blockSize = 21;
-    double C = 10.0;
-    int kernelSize = 7;
-    int iterations = 3;
+    bool enableShapeFilter = true;
+    int blockSize = 11;
+    double C = 2.0;
+    int kernelSize = 3;
+    int iterations = 1;
     bool display = false;
     bool showSummary = false;
     bool showHelp = false;
+    
+    // Coin detection parameters
+    bool enableCoins = false;
+    bool showCoinSummary = false;
+    double pixelsPerMM = 12.0;  // defaulting to phone 
+    std::string presetName = "";
+    bool doCalibration = false;
+    cv::Point calibrationPoint;
+    CoinType calibrationCoinType = CoinType::UNKNOWN;
+    bool interactiveMode = false;
     
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -86,28 +256,50 @@ int main(int argc, char* argv[]) {
         } else if (arg == "-summary") {
             showSummary = true;
         }
+        // Coin detection arguments
+        else if (arg == "-coins") {
+            enableCoins = true;
+        } else if (arg == "-coinsum") {
+            showCoinSummary = true;
+        } else if (arg == "-ppmm" && i + 1 < argc) {
+            pixelsPerMM = std::stod(argv[++i]);
+        } else if (arg == "-preset" && i + 1 < argc) {
+            presetName = argv[++i];
+            enableCoins = true;  // Automatically enable coin detection
+        } else if (arg == "-calibrate" && i + 3 < argc) {
+            doCalibration = true;
+            calibrationPoint.x = std::stoi(argv[++i]);
+            calibrationPoint.y = std::stoi(argv[++i]);
+            calibrationCoinType = stringToCoinType(argv[++i]);
+            if (calibrationCoinType == CoinType::UNKNOWN) {
+                std::cerr << "Error: Unknown coin type for calibration: " << argv[i] << std::endl;
+                return 1;
+            }
+            enableCoins = true;  // Automatically enable coin detection
+        } else if (arg == "-interactive") {
+            interactiveMode = true;
+            enableCoins = true;  // Automatically enable coin detection
+        }
     }
     
     if (showHelp || argc == 1) {
         printUsage(argv[0]);
+        printPresets();
         
         if (argc == 1) {
-            std::cout << "\nNo arguments provided. Running sample tests..." << std::endl;
-            
-            // Run sample tests if no arguments provided
-            //runTestWithSampleImages();
-            //runParameterComparison();
+            std::cout << "\nNo arguments provided." << std::endl;
+            runSampleTest();
         }
         
         return 0;
     }
     
-    // Main processing with user-provided image
+    // Main processing
     if (!inputPath.empty()) {
-        std::cout << "\n=== Processing user image ===" << std::endl;
+        std::cout << "\n=== Processing Image ===" << std::endl;
         std::cout << "Input: " << inputPath << std::endl;
         
-        // Create binary mask estimator and object counter instances
+        // Create instances
         BinaryMaskEstimator maskEstimator;
         ObjectCounter counter;
         
@@ -115,14 +307,42 @@ int main(int argc, char* argv[]) {
         maskEstimator.setAdaptiveThresholdParams(blockSize, C);
         maskEstimator.setMorphologicalParams(kernelSize, iterations);
         
-        // Configure object counter filtering parameters
+        // Configure object counter
         counter.setAreaFilter(minArea, maxArea);
         counter.setShapeFilter(minCircularity, maxAspectRatio);
+
+        std::cout << "\nConfiguration (Permissive for all coins):" << std::endl;
+        std::cout << "  Area filter: " << (enableAreaFilter ? "enabled" : "disabled");
+        if (enableAreaFilter) {
+            std::cout << " (min: " << minArea << ", max: " << maxArea << ")";
+        }
+        std::cout << std::endl;
+
         counter.enableAreaFiltering(enableAreaFilter);
         counter.enableShapeFiltering(enableShapeFilter);
+        counter.setCoinClassification(enableCoins);  // Fixed: use setCoinClassification instead
+        
+        // Handle preset calibration
+        if (!presetName.empty()) {
+            double presetValue = getPresetCalibration(presetName);
+            if (presetValue > 0) {
+                pixelsPerMM = presetValue;
+                std::cout << "Using preset calibration '" << presetName << "': " 
+                          << pixelsPerMM << " pixels/mm" << std::endl;
+            } else {
+                std::cerr << "Error: Unknown preset '" << presetName << "'" << std::endl;
+                printPresets();
+                return 1;
+            }
+        }
+        
+        if (pixelsPerMM > 0) {
+            std::cout << "\n\nsetting to " << pixelsPerMM << std::endl;
+            counter.setPixelsPerMM(pixelsPerMM);
+        }
         
         // Print configuration
-        std::cout << "Configuration:" << std::endl;
+        std::cout << "\nConfiguration:" << std::endl;
         std::cout << "  Area filter: " << (enableAreaFilter ? "enabled" : "disabled");
         if (enableAreaFilter) {
             std::cout << " (min: " << minArea << ", max: " << maxArea << ")";
@@ -136,14 +356,16 @@ int main(int argc, char* argv[]) {
         }
         std::cout << std::endl;
         
-        std::cout << "  Threshold params: blockSize=" << blockSize << ", C=" << C << std::endl;
-        std::cout << "  Morphology params: kernelSize=" << kernelSize 
-                  << ", iterations=" << iterations << std::endl;
+        std::cout << "  Coin detection: " << (enableCoins ? "enabled" : "disabled");
+        if (enableCoins && pixelsPerMM > 0) {
+            std::cout << " (calibration: " << pixelsPerMM << " pixels/mm)";
+        }
+        std::cout << std::endl;
         
-        // Step 1: Load image into mask estimator and generate binary mask
+        // Step 1: Generate binary mask
         std::cout << "\n=== Step 1: Generating Binary Mask ===" << std::endl;
         if (!maskEstimator.loadImage(inputPath)) {
-            std::cerr << "Failed to load input image into mask estimator: " << inputPath << std::endl;
+            std::cerr << "Failed to load image: " << inputPath << std::endl;
             return 1;
         }
         
@@ -153,15 +375,15 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        // Step 2: Load image and binary mask into object counter
-        std::cout << "\n=== Step 2: Loading Image and Mask into Counter ===" << std::endl;
+        // Step 2: Load into object counter
+        std::cout << "\n=== Step 2: Loading Image and Mask ===" << std::endl;
         if (!counter.loadImage(inputPath)) {
-            std::cerr << "Failed to load input image into object counter: " << inputPath << std::endl;
+            std::cerr << "Failed to load image into counter!" << std::endl;
             return 1;
         }
         
         if (!counter.loadBinaryMask(binaryMask)) {
-            std::cerr << "Failed to load binary mask into object counter!" << std::endl;
+            std::cerr << "Failed to load binary mask!" << std::endl;
             return 1;
         }
         
@@ -169,45 +391,75 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Step 3: Counting Objects ===" << std::endl;
         int objectCount = counter.countObjects();
         
-        if (objectCount >= 0) {
-            // Generate and display the main result
-            std::string imageName = inputPath.substr(inputPath.find_last_of("/\\") + 1);
-            std::cout << "\n" << std::string(50, '=') << std::endl;
-            std::cout << "RESULT: " << ObjectCounter::generateSummaryText(objectCount, imageName) << std::endl;
-            std::cout << std::string(50, '=') << std::endl;
-            
-            // Print detailed summary if requested
-            if (showSummary) {
-                counter.printObjectSummary();
-            }
-            
-            // Save results if output path specified
-            if (!outputPath.empty()) {
-                counter.saveResults(outputPath);
-                // Also save the original binary mask from the estimator
-                size_t lastDot = outputPath.find_last_of(".");
-                std::string basePathNoExt = (lastDot != std::string::npos) ? outputPath.substr(0, lastDot) : outputPath;
-                maskEstimator.saveImage(basePathNoExt + "_original_mask.png", binaryMask);
-            } else {
-                // Generate default output filename
-                size_t lastDot = inputPath.find_last_of(".");
-                std::string defaultOutput = inputPath.substr(0, lastDot) + "_object_count";
-                counter.saveResults(defaultOutput);
-                maskEstimator.saveImage(defaultOutput + "_original_mask.png", binaryMask);
-            }
-            
-            // Display if requested
-            if (display) {
-                counter.displayResults("Object Count Results");
-            }
-            
-            std::cout << "\nProcessing completed successfully!" << std::endl;
-        } else {
+        if (objectCount < 0) {
             std::cerr << "Failed to count objects!" << std::endl;
             return 1;
         }
+        
+        // Step 4: Handle calibration
+        if (interactiveMode && enableCoins) {
+            runInteractiveCalibration(counter);
+            // Re-run classification after calibration
+            counter.countObjects();
+        } else if (doCalibration && enableCoins) {
+            std::cout << "\n=== Step 4: Calibration ===" << std::endl;
+            counter.calibrateWithKnownCoin(calibrationPoint, calibrationCoinType);
+            // Re-run classification after calibration
+            counter.countObjects();
+        }
+        
+        // Step 5: Display results
+        std::cout << "\n=== Results ===" << std::endl;
+        std::string imageName = inputPath.substr(inputPath.find_last_of("/\\") + 1);
+        
+        if (enableCoins) {
+            auto coinCounts = counter.getCoinCounts();
+            double totalValue = counter.getTotalValue();
+            std::cout << std::string(60, '=') << std::endl;
+            std::cout << "COIN DETECTION RESULTS" << std::endl;
+            std::cout << std::string(60, '=') << std::endl;
+            std::cout << ObjectCounter::generateCoinSummaryText(coinCounts, totalValue) << std::endl;
+            std::cout << std::string(60, '=') << std::endl;
+            
+            if (showCoinSummary) {
+                counter.printCoinSummary();
+            }
+        } else {
+            std::cout << std::string(50, '=') << std::endl;
+            std::cout << "OBJECT DETECTION RESULTS" << std::endl;
+            std::cout << std::string(50, '=') << std::endl;
+            std::cout << ObjectCounter::generateSummaryText(objectCount, imageName) << std::endl;
+            std::cout << std::string(50, '=') << std::endl;
+        }
+        
+        // Print detailed summary if requested
+        if (showSummary) {
+            counter.printObjectSummary();
+        }
+        
+        // Save results
+        if (!outputPath.empty()) {
+            counter.saveResults(outputPath);
+            size_t lastDot = outputPath.find_last_of(".");
+            std::string basePathNoExt = (lastDot != std::string::npos) ? outputPath.substr(0, lastDot) : outputPath;
+            //maskEstimator.saveImage(basePathNoExt + "_original_mask.png", binaryMask);
+        } else {
+            // Generate default output filename
+            size_t lastDot = inputPath.find_last_of(".");
+            std::string defaultOutput = inputPath.substr(0, lastDot) + "_results";
+            counter.saveResults(defaultOutput);
+            //maskEstimator.saveImage(defaultOutput + "_original_mask.png", binaryMask);
+        }
+        
+        // Display if requested
+        if (display) {
+            counter.displayResults("Coin Detection Results");
+        }
+        
+        std::cout << "\nProcessing completed successfully!" << std::endl;
+        
     } else {
-        std::cerr << "No input image specified. Use -i <image_path> to specify an input image." << std::endl;
+        std::cerr << "No input image specified. Use -i <image_path>" << std::endl;
         std::cerr << "Use -help to see all available options." << std::endl;
         return 1;
     }
