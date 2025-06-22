@@ -11,6 +11,7 @@ void printUsage(const char* programName) {
     std::cout << "Options:" << std::endl;
     std::cout << "  -i <image_path>      Input image file path" << std::endl;
     std::cout << "  -o <output_path>     Output base path for results (optional)" << std::endl;
+    std::cout << "  -config <config_path> Path to coin configuration file (default: coins.cfg)" << std::endl;
     std::cout << "  -minarea <value>     Minimum object area (default: 50)" << std::endl;
     std::cout << "  -maxarea <value>     Maximum object area (default: 50000)" << std::endl;
     std::cout << "  -mincirc <value>     Minimum circularity for shape filtering (default: 0.3)" << std::endl;
@@ -91,105 +92,11 @@ CoinType stringToCoinType(const std::string& coinStr) {
     if (lower == "nickel") return CoinType::NICKEL;
     if (lower == "dime") return CoinType::DIME;
     if (lower == "quarter") return CoinType::QUARTER;
-    if (lower == "half" || lower == "halfdollar") return CoinType::HALF_DOLLAR;
-    if (lower == "dollar") return CoinType::DOLLAR;
-    
     return CoinType::UNKNOWN;
 }
 
-void runInteractiveCalibration(ObjectCounter& counter) {
-    std::cout << "\n=== Interactive Calibration Mode ===" << std::endl;
-    std::cout << "The image will be displayed. Click on a coin you can identify." << std::endl;
-    std::cout << "After clicking, you'll be prompted to enter the coin type." << std::endl;
-    
-    cv::Mat image = counter.getInputImage();
-    if (image.empty()) {
-        std::cerr << "Error: No image loaded for calibration" << std::endl;
-        return;
-    }
-    
-    // Create a copy for display
-    cv::Mat displayImage = image.clone();
-    
-    // Global variables for mouse callback
-    static cv::Point selectedPoint(-1, -1);
-    static bool pointSelected = false;
-    
-    // Mouse callback function
-    auto mouseCallback = [](int event, int x, int y, int flags, void* userdata) {
-        if (event == cv::EVENT_LBUTTONDOWN) {
-            selectedPoint = cv::Point(x, y);
-            pointSelected = true;
-            std::cout << "Selected point: (" << x << ", " << y << ")" << std::endl;
-        }
-    };
-    
-    cv::namedWindow("Calibration - Click on a known coin", cv::WINDOW_AUTOSIZE);
-    cv::setMouseCallback("Calibration - Click on a known coin", mouseCallback, nullptr);
-    
-    cv::imshow("Calibration - Click on a known coin", displayImage);
-    
-    std::cout << "Click on a coin in the image window..." << std::endl;
-    
-    // Wait for mouse click
-    while (!pointSelected) {
-        int key = cv::waitKey(30);
-        if (key == 27) { // ESC key
-            std::cout << "Calibration cancelled." << std::endl;
-            cv::destroyWindow("Calibration - Click on a known coin");
-            return;
-        }
-    }
-    
-    cv::destroyWindow("Calibration - Click on a known coin");
-    
-    // Get coin type from user
-    std::cout << "\nWhat type of coin did you click on?" << std::endl;
-    std::cout << "Options: penny, nickel, dime, quarter, half, dollar" << std::endl;
-    std::cout << "Enter coin type: ";
-    
-    std::string coinTypeStr;
-    std::cin >> coinTypeStr;
-    
-    CoinType coinType = stringToCoinType(coinTypeStr);
-    if (coinType == CoinType::UNKNOWN) {
-        std::cerr << "Error: Unknown coin type '" << coinTypeStr << "'" << std::endl;
-        return;
-    }
-    
-    // Perform calibration
-    counter.calibrateWithKnownCoin(selectedPoint, coinType);
-    std::cout << "Calibration completed!" << std::endl;
-}
 
-void runSampleTest() {
-    std::cout << "\n=== Running Sample Test ===" << std::endl;
-    std::cout << "This demonstrates the coin detection system." << std::endl;
-    std::cout << "For real testing, provide an image with: -i <image_path>" << std::endl;
-    
-    // Create a simple test image with circles
-    cv::Mat testImage(400, 600, CV_8UC3, cv::Scalar(50, 50, 50));
-    
-    // Draw some circles to simulate coins
-    cv::circle(testImage, cv::Point(100, 100), 30, cv::Scalar(200, 200, 200), -1); // Large circle
-    cv::circle(testImage, cv::Point(250, 100), 25, cv::Scalar(180, 180, 180), -1); // Medium circle
-    cv::circle(testImage, cv::Point(400, 100), 20, cv::Scalar(160, 160, 160), -1); // Small circle
-    cv::circle(testImage, cv::Point(100, 250), 35, cv::Scalar(220, 220, 220), -1); // Larger circle
-    cv::circle(testImage, cv::Point(250, 250), 22, cv::Scalar(170, 170, 170), -1); // Small-medium
-    
-    // Add some noise
-    cv::circle(testImage, cv::Point(450, 300), 15, cv::Scalar(100, 100, 100), -1); // Very small
-    cv::rectangle(testImage, cv::Rect(350, 200, 40, 60), cv::Scalar(150, 150, 150), -1); // Rectangle
-    
-    std::cout << "Created synthetic test image with circular objects." << std::endl;
-    
-    // Save test image
-    cv::imwrite("test_coins.png", testImage);
-    std::cout << "Test image saved as 'test_coins.png'" << std::endl;
-    
-    std::cout << "You can now test with: " << std::endl;
-    std::cout << "./program -i test_coins.png -coins -ppmm 10.0 -coinsum -display" << std::endl;
-}
+
 
 int main(int argc, char* argv[]) {
     std::cout << "Coin Counter Test Program" << std::endl;
@@ -198,6 +105,7 @@ int main(int argc, char* argv[]) {
     // Parse command line arguments
     std::string inputPath = "";
     std::string outputPath = "";
+    std::string configPath = "coins.cfg";
     double minArea = 200.0;
     double maxArea = 50000.0;
     double minCircularity = 0.3;
@@ -206,7 +114,7 @@ int main(int argc, char* argv[]) {
     bool enableShapeFilter = true;
     int blockSize = 11;
     double C = 2.0;
-    int kernelSize = 3;
+    int kernelSize = 2;
     int iterations = 1;
     bool display = false;
     bool showSummary = false;
@@ -231,6 +139,8 @@ int main(int argc, char* argv[]) {
             inputPath = argv[++i];
         } else if (arg == "-o" && i + 1 < argc) {
             outputPath = argv[++i];
+        } else if (arg == "-config" && i + 1 < argc) {
+            configPath = argv[++i];
         } else if (arg == "-minarea" && i + 1 < argc) {
             minArea = std::stod(argv[++i]);
         } else if (arg == "-maxarea" && i + 1 < argc) {
@@ -288,7 +198,6 @@ int main(int argc, char* argv[]) {
         
         if (argc == 1) {
             std::cout << "\nNo arguments provided." << std::endl;
-            runSampleTest();
         }
         
         return 0;
@@ -298,10 +207,20 @@ int main(int argc, char* argv[]) {
     if (!inputPath.empty()) {
         std::cout << "\n=== Processing Image ===" << std::endl;
         std::cout << "Input: " << inputPath << std::endl;
+        std::cout << "Config for coins : " << configPath << std::endl;
         
+        //print the stats being used for the binary mask
+        std::cout << "=======================================================" << std::endl;
+        std::cout << "initializing binary mask with the following parameters " << std::endl;
+        std::cout << "=======================================================" << std::endl;
+        std::cout << "block size: " << blockSize << std::endl;
+        std::cout << "Adaptive threshold C: " << C << std::endl;
+        std::cout << "kernel size: " << kernelSize << std::endl;
+        std::cout << "# of iterations: " << iterations << std::endl;
         // Create instances
         BinaryMaskEstimator maskEstimator;
-        ObjectCounter counter;
+        ObjectCounter counter(configPath);
+         
         
         // Configure mask estimator
         maskEstimator.setAdaptiveThresholdParams(blockSize, C);
@@ -398,7 +317,6 @@ int main(int argc, char* argv[]) {
         
         // Step 4: Handle calibration
         if (interactiveMode && enableCoins) {
-            runInteractiveCalibration(counter);
             // Re-run classification after calibration
             counter.countObjects();
         } else if (doCalibration && enableCoins) {

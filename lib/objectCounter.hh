@@ -53,11 +53,11 @@ private:
     bool useAreaFiltering;
     bool useShapeFiltering;
     
-    // New coin detection parameters
     bool enableCoinClassification;
     double pixelsPerMM;  // Calibration factor for size-based classification
     std::map<CoinType, CoinInfo> coinDatabase;
-    
+    std::string configFilePath;
+
     // Internal methods
     void findContours();
     void analyzeObjects();
@@ -65,21 +65,27 @@ private:
     double calculateAspectRatio(const cv::Rect& boundingBox);
     bool isValidObject(const ObjectInfo& obj);
     void drawObjectAnnotations(cv::Mat& image);
-    
-    // New coin classification methods
+   
+    //coin config loading 
     void initializeCoinDatabase();
+    bool loadCoinConfigFromFile(const std::string& configPath);
+    void loadDefaultCoinConfig();
     void classifyCoins();
     CoinType classifyBySize(double diameter_mm, double& confidence);
     double calculateDiameter(const std::vector<cv::Point>& contour);
     std::string coinTypeToString(CoinType type) const;
     cv::Scalar getCoinColor(CoinType type) const;
+    CoinType stringToCoinType(const std::string& coinStr) const;
+    cv::Scalar parseColor(const std::string& colorStr) const;
     
+
+
     // Static helper methods
     static void showImageInfo(const cv::Mat& image, const std::string& imageName);
     
 public:
     // Constructor and Destructor
-    ObjectCounter();
+    ObjectCounter(std::string configPath);
     ~ObjectCounter();
     
     // Image loading methods
@@ -91,7 +97,12 @@ public:
     
     // Main processing method
     int countObjects();
-    
+
+    // Configuration methods for coin size and type
+    bool loadCoinConfig(const std::string& configPath);
+    void reloadCoinConfig();
+    std::string getConfigPath() const;
+
     // Parameter setting methods
     void setAreaFilter(double minArea, double maxArea);
     void setShapeFilter(double minCircularity, double maxAspectRatio);

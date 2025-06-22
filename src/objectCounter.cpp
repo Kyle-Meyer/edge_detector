@@ -2,12 +2,15 @@
 #include <iostream>
 #include <algorithm>
 #include <iomanip>
+#include <fstream>
+#include <sstream>
 
 // Constructor
-ObjectCounter::ObjectCounter() 
+ObjectCounter::ObjectCounter(std::string aConfigPath) 
     : minObjectArea(50.0), maxObjectArea(50000.0), minCircularity(0.3), 
       maxAspectRatio(3.0), useAreaFiltering(true), useShapeFiltering(false),
-      enableCoinClassification(false), pixelsPerMM(0.0)
+      enableCoinClassification(false), pixelsPerMM(0.0),
+      configFilePath(aConfigPath)
 {
     // Default parameters work well for coins and similar circular objects
     initializeCoinDatabase();
@@ -21,10 +24,189 @@ ObjectCounter::~ObjectCounter() {
 // Initialize coin database with standard US coin specifications
 void ObjectCounter::initializeCoinDatabase() {
     //all magic values that I just had to sit here and try ovr and over to work with
+    /*
     coinDatabase[CoinType::PENNY] = {CoinType::PENNY, "Penny", 8.0, cv::Scalar(139, 69, 19)};      // Brown
     coinDatabase[CoinType::NICKEL] = {CoinType::NICKEL, "Nickel", 9.0, cv::Scalar(192, 192, 192)};  // Silver
     coinDatabase[CoinType::DIME] = {CoinType::DIME, "Dime", 7.56, cv::Scalar(211, 211, 211)};        // Light Silver
     coinDatabase[CoinType::QUARTER] = {CoinType::QUARTER, "Quarter", 10.25, cv::Scalar(169, 169, 169)}; // Gray
+    */
+    if (!loadCoinConfigFromFile(configFilePath)) 
+    {
+        std::cout << "Config file not found or invalid, using default coin specifications." << std::endl;
+        loadDefaultCoinConfig();
+    }
+}
+
+bool ObjectCounter::loadCoinConfigFromFile(const std::string& configPath) 
+{
+    std::ifstream file(configPath);
+    if (!file.is_open()) {
+        std::cerr << "Warning: Could not open coin config file: " << configPath << std::endl;
+        return false;
+    }
+    
+    std::cout << "Loading coin configuration from: " << configPath << std::endl;
+    
+    coinDatabase.clear();
+    std::string line;
+    int lineNumber = 0;
+    
+    while (std::getline(file, line)) 
+    {
+        lineNumber++;
+        
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#' || line[0] == ';') 
+        {
+            continue;
+        }
+        
+        // Parse line: TYPE,NAME,DIAMETER_MM,COLOR_BGR
+        // Example: PENNY,Penny,19.05,139:69:19
+        std::stringstream ss(line);
+        std::string typeStr, name, diameterStr, colorStr;
+        
+        if (!std::getline(ss, typeStr, ',') ||
+            !std::getline(ss, name, ',') ||
+            !std::getline(ss, diameterStr, ',') ||
+            !std::getline(ss, colorStr)) 
+        {
+            std::cerr << "Warning: Invalid format at line " << lineNumber 
+                      << " in config file: " << configPath << std::endl;
+            continue;
+        }
+        
+        // Convert type string to enum
+        CoinType coinType = stringToCoinType(typeStr);
+        if (coinType == CoinType::UNKNOWN) 
+        {
+            std::cerr << "Warning: Unknown coin type '" << typeStr 
+                      << "' at line " << lineNumber << std::endl;
+            continue;
+        }
+        
+        // Parse diameter
+        double diameter;
+        try 
+        {
+            diameter = std::stod(diameterStr);
+        } 
+        catch (const std::exception& e) 
+        {
+            std::cerr << "Warning: Invalid diameter '" << diameterStr 
+                      << "' at line " << lineNumber << std::endl;
+            continue;
+        }
+        
+        // Parse color
+        cv::Scalar color = parseColor(colorStr);
+        
+        // Add to database
+        coinDatabase[coinType] = {coinType, name, diameter, color};
+        std::cout << "  Loaded: " << name << " (diameter: " << diameter 
+                  << "mm, color: " << colorStr << ")" << std::endl;
+    }
+    
+    file.close();
+    
+    if (coinDatabase.empty()) 
+    {
+        std::cerr << "Error: No valid coin configurations loaded from file." << std::endl;
+        return false;
+    }
+    
+    std::cout << "Successfully loaded " << coinDatabase.size() 
+              << " coin configurations." << std::endl;
+    return true;
+}
+
+CoinType ObjectCounter::stringToCoinType(const std::string& coinStr) const 
+{
+    std::string lower = coinStr;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    
+    if (lower == "penny") return CoinType::PENNY;
+    if (lower == "nickel") return CoinType::NICKEL;
+    if (lower == "dime") return CoinType::DIME;
+    if (lower == "quarter") return CoinType::QUARTER;
+    
+    return CoinType::UNKNOWN;
+}
+
+cv::Scalar ObjectCounter::parseColor(const std::string& colorStr) const 
+{
+    cv::Scalar defaultColor(128, 128, 128); // Gray default
+    
+    // Expected format: "B:G:R" or "B,G,R"
+    std::string str = colorStr;
+    char delimiter = ':';
+    if (str.find(',') != std::string::npos) {
+        delimiter = ',';
+    }
+    
+    std::stringstream ss(str);
+    std::string bStr, gStr, rStr;
+    
+    if (std::getline(ss, bStr, delimiter) &&
+        std::getline(ss, gStr, delimiter) &&
+        std::getline(ss, rStr)) {
+        
+        try {
+            int b = std::stoi(bStr);
+            int g = std::stoi(gStr);
+            int r = std::stoi(rStr);
+            
+            // Clamp values to valid range
+            b = std::max(0, std::min(255, b));
+            g = std::max(0, std::min(255, g));
+            r = std::max(0, std::min(255, r));
+            
+            return cv::Scalar(b, g, r);
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: Invalid color format '" << colorStr 
+                      << "', using default gray." << std::endl;
+        }
+    } else {
+        std::cerr << "Warning: Invalid color format '" << colorStr 
+                  << "', expected 'B:G:R' or 'B,G,R'." << std::endl;
+    }
+    
+    return defaultColor;
+}
+
+// Public method to load/reload coin configuration
+bool ObjectCounter::loadCoinConfig(const std::string& configPath) {
+    configFilePath = configPath;
+    return loadCoinConfigFromFile(configPath);
+}
+
+// Reload current configuration
+void ObjectCounter::reloadCoinConfig() {
+    initializeCoinDatabase();
+}
+
+// Get current config file path
+std::string ObjectCounter::getConfigPath() const {
+    return configFilePath;
+}
+
+// Load default coin configuration (fallback)
+void ObjectCounter::loadDefaultCoinConfig() 
+{
+    std::cout << "Loading default US coin specifications..." << std::endl;
+    
+    coinDatabase.clear();
+    
+    // Default US coin specifications (diameter in mm)
+    coinDatabase[CoinType::PENNY] = {CoinType::PENNY, "Penny", 19.05, cv::Scalar(139, 69, 19)};
+    coinDatabase[CoinType::NICKEL] = {CoinType::NICKEL, "Nickel", 21.21, cv::Scalar(192, 192, 192)};
+    coinDatabase[CoinType::DIME] = {CoinType::DIME, "Dime", 17.91, cv::Scalar(211, 211, 211)};
+    coinDatabase[CoinType::QUARTER] = {CoinType::QUARTER, "Quarter", 24.26, cv::Scalar(169, 169, 169)};
+    coinDatabase[CoinType::HALF_DOLLAR] = {CoinType::HALF_DOLLAR, "Half Dollar", 30.61, cv::Scalar(190, 190, 190)};
+    coinDatabase[CoinType::DOLLAR] = {CoinType::DOLLAR, "Dollar", 26.50, cv::Scalar(200, 200, 150)};
+    
+    std::cout << "Default coin database initialized with " << coinDatabase.size() 
+              << " coin types." << std::endl;
 }
 
 // Load image from file path

@@ -1,0 +1,180 @@
+IMAGE PROCESSING ASSIGNMENT ANSWERS
+
+===========================================================================
+QUESTION 1: EDGE DETECTION ALGORITHMS
+===========================================================================
+
+1. SOBEL EDGE DETECTION
+
+Formulation:
+The Sobel operator uses two 3×3 convolution kernels:
+
+Horizontal Gradient (Gx):
+[-1  0  1]
+[-2  0  2]
+[-1  0  1]
+
+Vertical Gradient (Gy):
+[-1 -2 -1]
+[ 0  0  0]
+[ 1  2  1]
+
+Gradient magnitude: G = √(Gx² + Gy²)
+Gradient direction: θ = arctan(Gy / Gx)
+
+How it works:
+The Sobel operator detects edges by calculating the gradient of image intensity at each pixel. 
+It convolves the image with two kernels designed to respond maximally to vertical and horizontal edges. 
+The horizontal kernel (Gx) detects vertical edges by emphasizing pixel intensity changes in the horizontal direction, 
+assigning positive weights to right-side pixels and negative weights to left-side pixels. 
+The vertical kernel (Gy) works similarly for horizontal edges. 
+The center weights (±2) are stronger than corner weights (±1), providing smoothing and noise reduction. 
+The final gradient magnitude indicates edge strength while direction shows edge orientation.
+
+2. CANNY EDGE DETECTION
+
+Formulation:
+Multi-step process:
+
+1. Gaussian Smoothing: G(x,y) = (1/(2πσ²)) * e^(-(x²+y²)/(2σ²))
+2. Gradient Calculation: G = √(Gx² + Gy²), θ = arctan(Gy / Gx)
+3. Non-Maximum Suppression
+4. Double Thresholding (high and low thresholds)
+5. Edge Tracking by Hysteresis
+
+How it works:
+Canny is considered optimal for step-edge detection, satisfying three criteria: good detection, good localization, and single response. 
+First, Gaussian smoothing reduces noise. Then gradients are computed using operators like Sobel. 
+Non-maximum suppression thins edges by keeping only local maxima in the gradient direction through interpolation. 
+Double thresholding classifies pixels as strong edges (above high threshold), weak edges (between thresholds), 
+or non-edges (below low threshold). Finally, hysteresis tracking connects weak edges to strong edges, 
+ensuring continuity while rejecting isolated noise responses. This produces clean, thin, well-connected edge maps.
+
+3. LAPLACIAN OF GAUSSIAN (LoG)
+
+Formulation:
+2D Gaussian: G(x,y,σ) = (1/(2πσ²)) * e^(-(x²+y²)/(2σ²))
+Laplacian: ∇²f = ∂²f/∂x² + ∂²f/∂y²
+Combined LoG: LoG(x,y,σ) = -(1/(πσ⁴))[1 - (x²+y²)/(2σ²)] * e^(-(x²+y²)/(2σ²))
+
+Discrete 5×5 kernel example:
+[ 0 -1 -2 -1  0]
+[-1 -4 -8 -4 -1]
+[-2 -8 24 -8 -2] * (1/16)
+[-1 -4 -8 -4 -1]
+[ 0 -1 -2 -1  0]
+
+How it works:
+LoG detects edges by finding zero-crossings in the second derivative of image intensity. 
+Edges correspond to locations where the second derivative changes sign. 
+The Gaussian component smooths the image to reduce noise (since Laplacian is noise-sensitive) 
+and provides a scale parameter (σ) determining edge size detection. 
+The Laplacian computes the second derivative, which equals zero at first derivative peaks (edge locations). 
+LoG is isotropic (rotation-invariant) and provides good localization, but tends to produce closed 
+contours and can be noise-sensitive despite Gaussian smoothing.
+
+===========================================================================
+QUESTION 2: IMAGE SMOOTHING ALGORITHMS
+===========================================================================
+
+1. GAUSSIAN SMOOTHING
+
+Formulation:
+G(x,y,σ) = (1/(2πσ²)) * e^(-(x²+y²)/(2σ²))
+
+Example 5×5 Gaussian kernel (σ ≈ 1.0):
+[1  4  6  4  1]
+[4 16 24 16  4]
+[6 24 36 24  6] * (1/256)
+[4 16 24 16  4]
+[1  4  6  4  1]
+
+How it works:
+Gaussian smoothing convolves the image with a Gaussian kernel creating a bell-shaped weight distribution. 
+Pixels closer to the kernel center have higher weights, ensuring the central pixel has most influence. 
+The standard deviation (σ) controls smoothing amount - larger σ creates more smoothing by weighting distant pixels more heavily. 
+The filter is separable, allowing implementation as two sequential 1D convolutions (horizontal then vertical), 
+reducing complexity from O(n²) to O(n) per pixel. 
+Gaussian smoothing effectively reduces high-frequency noise while preserving overall image structure and is optimal for minimizing 
+spatial-frequency domain uncertainty trade-offs.
+
+2. MEAN (BOX) FILTERING
+
+Formulation:
+H(x,y) = 1/(m×n) where m×n is kernel size
+
+3×3 Mean filter kernel:
+[1 1 1]
+[1 1 1] * (1/9)
+[1 1 1]
+
+5×5 Mean filter kernel:
+[1 1 1 1 1]
+[1 1 1 1 1]
+[1 1 1 1 1] * (1/25)
+[1 1 1 1 1]
+[1 1 1 1 1]
+
+How it works:
+Mean filtering replaces each pixel with the average value of pixels in its neighborhood. 
+The kernel assigns equal weight to all pixels within the window, making it the simplest linear smoothing form. 
+The algorithm slides the kernel across the image, computing the arithmetic mean of pixels under the kernel at each position. 
+This reduces noise by averaging random variations but blurs edges and details more than Gaussian filtering. 
+Mean filtering is computationally efficient and can use integral images for constant-time operation regardless of kernel size. 
+However, it produces less natural results than Gaussian filtering since it doesn't weight closer pixels more heavily, 
+and its rectangular frequency response can introduce ringing artifacts.
+
+===========================================================================
+QUESTION 3: iCOIN+ MOBILE APP DEPLOYMENT ANALYSIS
+===========================================================================
+
+CAMERA PHONE IMAGES (I') ANALYSIS:
+
+The program was built under the assumption that the images were taken with a regular camera originally, meaning I set the pixels per MM to be 15.
+However after some testing with the sample images, I figured that the provided images were taken with a phone camera (which is traditionally
+12 pixels per MM). I then made it configurable. But by default, the program works with 12 pixels per MM, so I'd imagine that out of the box it 
+wouldnt be too bad. The real problem becomes if its not 12 pixels per MM, as then the size of the coins will be drastically different, and a new coin 
+config would need to be made. 
+
+Its also worth pointing out that I used adaptive thresholding and Morphological operations to obtain the binary mask, the image processing becomes 
+increasingly sensitive to things like the size of the kernel, the block size, number of iterations, and the C value used in adaptive thresholding.
+I eventually fine tuned it to values that I thought were good
+
+blockSize = 11;
+C = 2.0;
+kernelSize = 2;
+iterations = 1;
+
+but if you look at the mask made for images 12 and 10, coins that show high amounts of reflectivity will fail to be recognized. To overcome this, it might be better to mess with the phone's HDR settings before taking the actual photo to either increase or decrease the contrast of the base image. In other
+words, making a more robust preprocessing system before feeding the image into the binaryMaskEstimator.
+
+All in all though I'd imagine that as it stands, this program would work roughly 60-70% of the time. But as a commercial grade product
+I would not use it. 
+
+
+===========================================================================
+REFERENCES
+===========================================================================
+
+QUESTION 1 SOURCES:
+Canny, John. "A Computational Approach to Edge Detection." IEEE Transactions on Pattern Analysis and Machine Intelligence 8, no. 6 (1986): 679-698.
+
+Marr, David, and Ellen Hildreth. "Theory of Edge Detection." Proceedings of the Royal Society of London. Series B, Biological Sciences 207, no. 1167 (1980): 187-217.
+
+Sobel, Irwin, and Gary Feldman. "A 3×3 Isotropic Gradient Operator for Image Processing." Presented at the Stanford Artificial Intelligence Project, 1968.
+
+QUESTION 2 SOURCES:
+Gonzalez, Rafael C., and Richard E. Woods. Digital Image Processing. 4th ed. New York: Pearson, 2018.
+
+Nixon, Mark S., and Alberto S. Aguado. Feature Extraction and Image Processing for Computer Vision. 4th ed. Oxford: Academic Press, 2019.
+
+Rosenfeld, Azriel, and Avinash C. Kak. Digital Picture Processing. 2nd ed. Orlando: Academic Press, 1982.
+
+================================================================
+SOURCES USED FOR MAKING THE CODE 
+================================================================
+Bradski, Gary, and Adrian Kaehler. Learning OpenCV: Computer Vision with the OpenCV Library. Sebastopol, CA: O'Reilly Media, 2008.
+
+Gonzalez, Rafael C., and Richard E. Woods. Digital Image Processing. 4th ed. New York: Pearson, 2018.
+
+Soille, Pierre. Morphological Image Analysis: Principles and Applications. 2nd ed. Berlin: Springer-Verlag, 2003.
